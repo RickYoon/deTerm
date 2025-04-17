@@ -7,6 +7,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { fetchCryptoData, fetchHistoricalData } from '../lib/api';
 import { usePrivy, useLinkAccount, useWallets, useSignMessage } from '@privy-io/react-auth';
+import { useSolanaWallets } from '@privy-io/react-auth/solana';
 
 // TradingView 위젯 타입 선언
 declare global {
@@ -80,18 +81,28 @@ interface Position {
   liquidationRisk: number;
 }
 
-interface PrivyLinkSuccess {
-  linkedAccount: {
-    type: string;
-    address?: string;
-    walletClientType?: string;
-  };
+interface LinkedAccount {
+  type: string;
+  address?: string;
+  chainType?: string;
+  walletClientType?: string;
+  connectorType?: string;
 }
 
 interface WalletWithMetadata {
   chainType: string;
   address: string;
   active?: boolean;
+  walletClientType?: string;
+  connectorType?: string;
+}
+
+interface PrivyLinkSuccess {
+  linkedAccount: {
+    type: string;
+    address?: string;
+    walletClientType?: string;
+  };
 }
 
 export default function Terminal() {
@@ -129,6 +140,9 @@ export default function Terminal() {
   const [linkedWallets, setLinkedWallets] = useState<WalletWithMetadata[]>([]);
   const [activeWalletAddress, setActiveWalletAddress] = useState<string>('');
   const { signMessage } = useSignMessage();
+  const { wallets: solanaWallets } = useSolanaWallets();
+  const [showSigningModal, setShowSigningModal] = useState(false);
+  const [signingMessage, setSigningMessage] = useState('');
 
   // 포지션 상태 추가
   const [positions, setPositions] = useState<Position[]>([
@@ -467,9 +481,29 @@ export default function Terminal() {
 
   useEffect(() => {
     if (user?.linkedAccounts) {
-      const wallets = user.linkedAccounts.filter(
-        account => account.type === 'wallet'
-      ) as WalletWithMetadata[];
+      console.log('전체 linkedAccounts:', user.linkedAccounts);
+      
+      const wallets = (user.linkedAccounts as LinkedAccount[])
+        .filter(account => account.type === 'wallet')
+        .map(account => {
+          console.log('각 지갑 정보:', account.chainType);
+          
+          // chainType이 ethereum인 경우 EVM으로 변경
+          const chainType = account.chainType === 'ethereum' ? 'EVM' : account.chainType;
+          // chainType이 ethereum인 경우 EVM으로 변경
+          const clientType = account.walletClientType === 'privy' ? 'Privy' : account.walletClientType;
+          const connectorType = account.connectorType === 'embedded' ? 'embedded' : "external";
+          
+          return {
+            chainType: chainType || '',
+            address: account.address || '',
+            active: account.address === activeWalletAddress,
+            walletClientType: clientType || 'External',
+            connectorType: connectorType || 'external'
+          };
+        });
+      
+      console.log('변환된 wallets:', wallets);
       setLinkedWallets(wallets);
       
       // Set first wallet as active by default if none is active
@@ -592,6 +626,7 @@ export default function Terminal() {
                 <div className="space-y-1">
                   <div className="text-xs text-[#ffb300]">
                     {wallet.chainType === 'solana' ? 'Solana' : 'EVM'}
+                    {wallet.connectorType === 'embedded' ? ' (Embedded)' : ` (${wallet.walletClientType || 'External'})`}
                   </div>
                   <div className="text-xs text-terminal-text">
                     {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
@@ -643,8 +678,8 @@ export default function Terminal() {
                   return;
                 }
 
-                // 연결된 지갑이 있는지 확인
-                if (!activeWalletAddress && !user?.wallet?.address) {
+                // 연결된 지갑이 없는 경우 처리
+                if (!activeWalletAddress) {
                   const connectWallet = window.confirm(
                     "연결된 지갑이 없습니다. 지갑을 연결하시겠습니까?"
                   );
@@ -656,24 +691,64 @@ export default function Terminal() {
                   }
                 }
 
-                const provider = await wallets[0].getEthereumProvider();
-                const signature = await provider.request({
-                  method: 'personal_sign',
-                  params: ['I hereby vote for foobar', wallets[0].address]
-                });
+                let signature;
+                const message = `${activeWalletAddress} is voting for ${currentSymbol} project`;
+                
+                // 현재 활성화된 지갑 찾기
+                const activeWallet = linkedWallets.find(w => w.address === activeWalletAddress);
+                
+                if (!activeWallet) {
+                  throw new Error("활성화된 지갑을 찾을 수 없습니다.");
+                }
 
-                // 서명 시도
-                // const { signature } = await signMessage(
-                //   { message: 'I hereby vote for foobar' },
-                //   { 
-                //     uiOptions: {
-                //       title: 'You are voting for foobar project'
-                //     },
-                //     // 활성화된 지갑이 있으면 해당 지갑 사용, 없으면 임베디드 지갑 사용
-                //     address: activeWalletAddress || user?.wallet?.address
-                //   }
-                // );
-                // console.log("Signature:", signature);
+                // 임베디드 지갑인 경우
+                if (activeWallet.connectorType === 'embedded') {
+                  // Solana 임베디드 지갑
+                  if (activeWallet.chainType === 'solana') {
+                    setSigningMessage(message);
+                    setShowSigningModal(true);
+                    return;
+                  } 
+                  // EVM 임베디드 지갑
+                  else {
+                    const { signature: embeddedSignature } = await signMessage(
+                      { message },
+                      { 
+                        uiOptions: {
+                          title: 'You are voting for foobar project'
+                        },
+                        address: activeWalletAddress
+                      }
+                    );
+                    signature = embeddedSignature;
+                  }
+                }
+                // 외부 지갑인 경우
+                else {
+                  if (activeWallet.chainType === 'solana') {
+                    // Solana 외부 지갑 서명
+                    const solanaWallet = solanaWallets.find(w => w.address === activeWalletAddress);
+                    if (!solanaWallet) {
+                      throw new Error("연결된 Solana 지갑을 찾을 수 없습니다.");
+                    }
+                    signature = await solanaWallet.signMessage(
+                      new TextEncoder().encode(message)
+                    );
+                  } else {
+                    // EVM 외부 지갑 서명
+                    const externalWallet = wallets.find(w => w.address === activeWalletAddress);
+                    if (!externalWallet) {
+                      throw new Error("연결된 EVM 지갑을 찾을 수 없습니다.");
+                    }
+                    const provider = await externalWallet.getEthereumProvider();
+                    signature = await provider.request({
+                      method: 'personal_sign',
+                      params: [message, activeWalletAddress]
+                    });
+                  }
+                }
+
+                console.log("Signature:", signature);
                 alert("서명 성공!");
               } catch (error) {
                 console.error("서명 실패:", error);
@@ -743,8 +818,69 @@ export default function Terminal() {
     </div>
   );
 
+  // SigningModal 컴포넌트 추가
+  const SigningModal = () => {
+    if (!showSigningModal) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-[#1a1a1a] border border-terminal-border rounded-lg p-6 max-w-md w-full mx-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-medium text-[#ffb300]">You are voting for foobar project</h3>
+            <button 
+              onClick={() => setShowSigningModal(false)}
+              className="text-[#666] hover:text-[#ffb300]"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="space-y-4">
+            <div className="text-sm text-terminal-text">
+              Signing this message will not cost you any fees.
+            </div>
+            <div className="bg-[#111] p-3 rounded text-xs font-mono break-all">
+              {signingMessage}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowSigningModal(false)}
+                className="px-4 py-2 text-sm text-[#666] hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const solanaWallet = solanaWallets.find(w => w.address === activeWalletAddress);
+                    if (!solanaWallet) {
+                      throw new Error("연결된 Solana 지갑을 찾을 수 없습니다.");
+                    }
+                    const signature = await solanaWallet.signMessage(
+                      new TextEncoder().encode(signingMessage)
+                    );
+
+                    console.log("Signature:", signature);
+                    alert("서명 성공!");
+                    setShowSigningModal(false);
+                  } catch (error) {
+                    console.error("서명 실패:", error);
+                    alert("서명 실패: " + (error as Error).message);
+                  }
+                }}
+                className="px-4 py-2 text-sm bg-[#ffb300] text-black rounded hover:bg-[#ffa200] transition-colors"
+              >
+                Sign and continue
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="w-full h-full min-h-screen bg-terminal-bg text-terminal-text p-4">
+      <SigningModal />
       <div className="border border-terminal-border rounded p-2">
         {/* 터미널 입력 섹션을 상단으로 이동 */}
         <div className="mb-2 border border-terminal-border rounded bg-terminal-bg">

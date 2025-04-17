@@ -3,6 +3,7 @@
 import React from 'react';
 import { PrivyProvider } from '@privy-io/react-auth';
 import dynamic from 'next/dynamic';
+import {toSolanaWalletConnectors} from "@privy-io/react-auth/solana";
 
 // SSR을 비활성화하고 클라이언트 사이드에서만 렌더링
 const DynamicPrivyProvider = dynamic(
@@ -22,7 +23,13 @@ export default function ClientProviders({
         loginMethods: ['email', 'wallet'],
         appearance: {
           theme: 'dark',
-          accentColor: '#ffb300'
+          accentColor: '#ffb300',
+          walletChainType: 'ethereum-and-solana'
+        },
+        externalWallets: {
+          solana: {
+            connectors: toSolanaWalletConnectors()
+          }
         },
         embeddedWallets: {
           ethereum: {
@@ -31,7 +38,7 @@ export default function ClientProviders({
           solana: {
               createOnLogin: 'users-without-wallets',
           },
-      },
+      }
       }}
     >
       {children}
