@@ -1,50 +1,55 @@
 # deTerminal
 
-터미널 스타일의 Web3 인터페이스를 제공하는 dApp입니다.
+A Web3 interface with a terminal-style UI/UX.
 
-## 주요 기능
+## Features
 
-- 🔐 멀티체인 지갑 연결 (EVM, Solana)
-- 💼 임베디드 월렛 지원
-- 📝 메시지 서명
-- 💻 터미널 스타일 UI/UX
+- 🔐 Multi-chain Wallet Support (EVM, Solana)
+- 💼 Embedded Wallet Integration
+- 📝 Message Signing
+- 💻 Terminal-style Interface
+- 🔄 Real-time Transaction Updates
 
-## 기술 스택
+## Tech Stack
 
 - Next.js 14
 - TypeScript
 - Tailwind CSS
-- Privy (월렛 연결)
+- Privy (Wallet Integration)
 - WalletConnect
 
-## 시작하기
+## Getting Started
 
-1. 저장소 클론
+1. Clone the repository
 
 ```bash
 git clone https://github.com/RickYoon/deTerm.git
 cd deTerm
 ```
 
-2. 의존성 설치
+2. Install dependencies
 
 ```bash
 npm install
 ```
 
-3. 환경 변수 설정
-   `.env.local` 파일을 생성하고 다음 변수들을 설정하세요:
+3. Set up environment variables
+   Create a `.env.local` file and add the following:
 
 ```
 NEXT_PUBLIC_PRIVY_APP_ID=your_privy_app_id
 ```
 
-4. 개발 서버 실행
+4. Run the development server
 
 ```bash
 npm run dev
 ```
 
-## 라이선스
+## Contributing
 
-MIT
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
