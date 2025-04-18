@@ -6,28 +6,24 @@ export async function GET() {
     
     // 백팩과 하이퍼리퀴드 API 동시 호출
     const [backpackResponse, openInterestResponse, hyperliquidResponse] = await Promise.all([
-      fetch('https://api.backpack.exchange/api/v1/markPrices', {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'User-Agent': 'curl/8.7.1',
-        },
-      }),
-      fetch('https://api.backpack.exchange/api/v1/openInterest', {
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'User-Agent': 'curl/8.7.1',
-        },
-      }),
+      fetch('https://api.backpack.exchange/api/v1/markPrices'),
+      fetch('https://api.backpack.exchange/api/v1/openInterest'),
       fetch('https://api.hyperliquid.xyz/info', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'User-Agent': 'PostmanRuntime/7.36.0',
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Host': 'api.hyperliquid.xyz',
+          'Cache-Control': 'no-cache',
+          'Accept-Language': '*'
         },
         body: JSON.stringify({
           type: "metaAndAssetCtxs"
-        })
+        }),
+        cache: 'no-store'
       })
     ]);
 
@@ -39,36 +35,83 @@ export async function GET() {
     const openInterestData = await openInterestResponse.json();
     const hyperliquidData = await hyperliquidResponse.json();
 
-    // 하이퍼리퀴드 응답 구조 확인
-    console.log('Hyperliquid response structure:', {
-      hasData: !!hyperliquidData,
-      keys: Object.keys(hyperliquidData),
-      meta: hyperliquidData[0],
-      universe: hyperliquidData[0]?.universe,
-      firstItemSample: hyperliquidData[1]?.[0],
-      totalItems: hyperliquidData[1]?.length
+    // API 요청/응답 상세 로깅
+    console.log('Hyperliquid API Request Details:', {
+      url: 'https://api.hyperliquid.xyz/info',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'PostmanRuntime/7.36.0',
+        'Accept': '*/*',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Host': 'api.hyperliquid.xyz',
+        'Cache-Control': 'no-cache',
+        'Accept-Language': '*'
+      },
+      body: {
+        type: "metaAndAssetCtxs"
+      }
     });
+
+    // 전체 응답 구조 로깅
+    console.log('Full Hyperliquid Response Structure:', {
+      responseStatus: hyperliquidResponse.status,
+      responseHeaders: Object.fromEntries(hyperliquidResponse.headers.entries()),
+      dataStructure: {
+        hasUniverse: !!hyperliquidData[0]?.universe,
+        universeLength: hyperliquidData[0]?.universe?.length,
+        hasAssetCtx: !!hyperliquidData[1],
+        assetCtxLength: hyperliquidData[1]?.length
+      },
+      btcRawData: hyperliquidData[1]?.find((item: any, index: number) => 
+        hyperliquidData[0]?.universe[index]?.name === 'BTC'
+      )
+    });
+
+    // BTC 데이터 처리 과정 로깅
+    const btcData = hyperliquidData[1]?.find((item: any, index: number) => 
+      hyperliquidData[0]?.universe[index]?.name === 'BTC'
+    );
+    
+    console.log('BTC Data Processing:', {
+      originalFunding: btcData?.funding,
+      parsedFunding: parseFloat(btcData?.funding),
+      fundingString: btcData?.funding?.toString(),
+      fundingNumber: Number(btcData?.funding)
+    });
+
+    console.log('Hyperliquid data:', hyperliquidData[1].slice(0, 3));
+
+    // API 응답 데이터 로깅
+    const btcHyperliquidData = hyperliquidData[1]?.find((item: any, index: number) => 
+      hyperliquidData[0]?.universe[index]?.name === 'BTC'
+    );
+    
+    // console.log('Raw API responses:', {
+    //   backpack: {
+    //     BTC: backpackData.find((item: any) => item.symbol.startsWith('BTC')),
+    //     timestamp: new Date().toISOString()
+    //   },
+    //   hyperliquid: {
+    //     rawData: btcHyperliquidData,
+    //     meta: hyperliquidData[0]?.universe?.find((item: any) => item.name === 'BTC'),
+    //     funding: btcHyperliquidData?.funding,
+    //     fundingAsNumber: parseFloat(btcHyperliquidData?.funding),
+    //     timestamp: new Date().toISOString()
+    //   }
+    // });
 
     // 하이퍼리퀴드 데이터 매핑
     const hyperliquidMap = new Map();
     if (Array.isArray(hyperliquidData[1]) && Array.isArray(hyperliquidData[0]?.universe)) {
-      console.log('Processing Hyperliquid data...');
       hyperliquidData[1].forEach((item: any, index: number) => {
         const coinInfo = hyperliquidData[0].universe[index];
         if (coinInfo && !item.isDelisted) {
-          const symbol = coinInfo.name;  // coin 대신 name 필드 사용
-          
-          console.log(`Processing ${symbol}:`, {
-            symbol,
-            rawFunding: item.funding,
-            fundingRate: parseFloat(item.funding),
-            markPrice: item.markPx,
-            openInterest: item.openInterest,
-            coinInfo
-          });
-
+          const symbol = coinInfo.name;
+          // funding 값을 문자열로 유지
           hyperliquidMap.set(symbol, {
-            fundingRate: parseFloat(item.funding),
+            fundingRate: item.funding,  // parseFloat 제거
             markPrice: parseFloat(item.markPx),
             openInterest: parseFloat(item.openInterest)
           });
@@ -76,13 +119,12 @@ export async function GET() {
       });
     }
 
-    // 매핑된 데이터 샘플 로깅
-    console.log('Mapped Hyperliquid data sample:', {
-      BTC: hyperliquidMap.get('BTC'),
-      ETH: hyperliquidMap.get('ETH'),
-      mapSize: hyperliquidMap.size,
-      allKeys: Array.from(hyperliquidMap.keys())
-    });
+    // console.log('Mapped Hyperliquid data sample:', {
+    //   BTC: hyperliquidMap.get('BTC'),
+    //   ETH: hyperliquidMap.get('ETH'),
+    //   mapSize: hyperliquidMap.size,
+    //   allKeys: Array.from(hyperliquidMap.keys())
+    // });
 
     // Open Interest 데이터 매핑
     const openInterestMap: { [key: string]: string } = {};
@@ -96,7 +138,17 @@ export async function GET() {
       const symbol = item.symbol.split('_')[0];
       const backpackFundingRate = parseFloat(item.fundingRate) * 100; // 퍼센트로 변환
       const hyperliquidInfo = hyperliquidMap.get(symbol);
-      const hyperliquidFundingRate = hyperliquidInfo ? hyperliquidInfo.fundingRate : 0;
+      // funding 값을 마지막에 parseFloat 적용하고 100을 곱해서 퍼센트로 변환 후 8을 곱하고 소수점 4자리까지 표시
+      const hyperliquidFundingRate = hyperliquidInfo ? Number((parseFloat(hyperliquidInfo.fundingRate) * 100 * 8).toFixed(4)) : 0;
+
+      // 상세 로깅 추가
+      if (symbol === 'BTC') {
+        console.log('BTC Funding Rate Processing:', {
+          originalRate: hyperliquidInfo?.fundingRate,
+          parsedRate: parseFloat(hyperliquidInfo?.fundingRate) * 100 * 8,
+          roundedRate: hyperliquidFundingRate
+        });
+      }
 
       // 펀딩 아비트라지 수익률 계산
       const fundingArb = Math.abs(backpackFundingRate - hyperliquidFundingRate);
@@ -110,19 +162,19 @@ export async function GET() {
 
       // 상세 디버그 로그 (BTC와 ETH에 대해)
       if (symbol === 'BTC' || symbol === 'ETH') {
-        console.log(`${symbol} funding rate processing:`, {
-          backpack: {
-            rawValue: item.fundingRate,
-            percentageValue: backpackFundingRate
-          },
-          hyperliquid: {
-            rawValue: hyperliquidInfo?.fundingRate,
-            percentageValue: hyperliquidFundingRate,
-            originalData: hyperliquidMap.get(symbol)
-          },
-          fundingArb,
-          nextFundingTimestamp: item.nextFundingTimestamp
-        });
+        // console.log(`${symbol} funding rate processing:`, {
+        //   backpack: {
+        //     rawValue: item.fundingRate,
+        //     percentageValue: backpackFundingRate
+        //   },
+        //   hyperliquid: {
+        //     rawValue: hyperliquidInfo?.fundingRate,
+        //     percentageValue: hyperliquidFundingRate,
+        //     originalData: hyperliquidMap.get(symbol)
+        //   },
+        //   fundingArb,
+        //   nextFundingTimestamp: item.nextFundingTimestamp
+        // });
       }
 
       return {
@@ -136,7 +188,7 @@ export async function GET() {
           indexPrice: item.indexPrice
         },
         hyperliquid: {
-          rate: hyperliquidFundingRate.toFixed(4),
+          rate: hyperliquidFundingRate.toString(),
           markPrice: hyperliquidInfo ? hyperliquidInfo.markPrice.toString() : '0',
           openInterest: hyperliquidInfo ? hyperliquidInfo.openInterest.toString() : '0'
         },

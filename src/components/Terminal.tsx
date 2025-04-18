@@ -143,6 +143,7 @@ export default function Terminal() {
   const { wallets: solanaWallets } = useSolanaWallets();
   const [showSigningModal, setShowSigningModal] = useState(false);
   const [signingMessage, setSigningMessage] = useState('');
+  const [showAnnualRate, setShowAnnualRate] = useState(false);
 
   // 포지션 상태 추가
   const [positions, setPositions] = useState<Position[]>([
@@ -942,8 +943,15 @@ export default function Terminal() {
           {/* 펀딩비 섹션 */}
           <div className="col-span-12 border border-terminal-border rounded p-2">
             <div className="bg-[#111] text-xs font-bold p-1 mb-2 flex justify-between items-center">
-              <span>FUNDING COMPARISON (Annual Rate)</span>
-              <span className="text-[#666]">Updated every 30s</span>
+              <span>FUNDING COMPARISON (8h Rate)</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAnnualRate(!showAnnualRate)}
+                  className="bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#ffb300] px-2 py-1 rounded text-xs"
+                >
+                  {showAnnualRate ? '8h Rate' : 'Annual Rate'}
+                </button>
+              </div>
             </div>
             <div className="overflow-y-auto max-h-[calc(100vh-50vh-8rem)]">
               <table className="w-full text-xs font-mono">
@@ -965,13 +973,13 @@ export default function Terminal() {
                       <td className="text-left p-1 text-[#ffb300]">{rate.symbol}</td>
                       <td className="text-right p-1 text-white">${formatNumber(parseFloat(rate.openInterest))}</td>
                       <td className={`text-right p-1 ${parseFloat(rate.backpack.rate) > 0 ? 'text-green-500' : parseFloat(rate.backpack.rate) < 0 ? 'text-red-500' : 'text-white'}`}>
-                        {rate.backpack.rate}%
+                        {showAnnualRate ? `${(parseFloat(rate.backpack.rate) * 1095).toFixed(2)}` : rate.backpack.rate}%
                       </td>
                       <td className={`text-right p-1 ${parseFloat(rate.hyperliquid.rate) > 0 ? 'text-green-500' : parseFloat(rate.hyperliquid.rate) < 0 ? 'text-red-500' : 'text-white'}`}>
-                        {rate.hyperliquid.rate}%
+                        {showAnnualRate ? `${(parseFloat(rate.hyperliquid.rate) * 1095).toFixed(2)}` : rate.hyperliquid.rate}%
                       </td>
                       <td className="text-right p-1 text-yellow-500">
-                        {rate.fundingArb}%
+                        {showAnnualRate ? `${(parseFloat(rate.fundingArb) * 1095).toFixed(2)}` : rate.fundingArb}%
                       </td>
                       <td className="text-center p-1">
                         <button
