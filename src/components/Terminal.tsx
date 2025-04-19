@@ -5,7 +5,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
-import { fetchCryptoData, fetchHistoricalData } from '../lib/api';
+import { fetchCryptoData, fetchHistoricalData, getBackpackAccount } from '../lib/api';
 import { usePrivy, useLinkAccount, useWallets, useSignMessage } from '@privy-io/react-auth';
 import { useSolanaWallets } from '@privy-io/react-auth/solana';
 
@@ -66,19 +66,18 @@ interface FundingRate {
   };
 }
 
-// Position 인터페이스 추가
+// Position 인터페이스 수정
 interface Position {
   symbol: string;
-  side: 'LONG' | 'SHORT';
-  size: number;
-  entry: number;
-  liq: number;
-  pnl: number;
-  roe: number;
-  exchange: string;
-  fundingRate: number;
-  nextFundingTime: string;
-  liquidationRisk: number;
+  netQuantity: string;
+  entryPrice: string;
+  estLiquidationPrice: string;
+  pnlUnrealized: string;
+  pnlRealized: string;
+  cumulativeFundingPayment: string;
+  markPrice: string;
+  netExposureNotional: string;
+  netCost: string;
 }
 
 interface LinkedAccount {
@@ -144,36 +143,11 @@ export default function Terminal() {
   const [showSigningModal, setShowSigningModal] = useState(false);
   const [signingMessage, setSigningMessage] = useState('');
   const [showAnnualRate, setShowAnnualRate] = useState(false);
+  const [backpackAccount, setBackpackAccount] = useState<any>(null);
 
-  // 포지션 상태 추가
-  const [positions, setPositions] = useState<Position[]>([
-    {
-      symbol: 'BTCUSDT',
-      side: 'LONG',
-      size: 0.5,
-      entry: 42150.5,
-      liq: 38000,
-      pnl: 325.5,
-      roe: 15.4,
-      exchange: 'Backpack',
-      fundingRate: 0.01,
-      nextFundingTime: '2024-04-01T12:00:00',
-      liquidationRisk: 25
-    },
-    {
-      symbol: 'ETHUSDT',
-      side: 'SHORT',
-      size: 2.5,
-      entry: 2250.8,
-      liq: 2450,
-      pnl: -125.3,
-      roe: -5.5,
-      exchange: 'Hyperliquid',
-      fundingRate: -0.02,
-      nextFundingTime: '2024-04-01T12:00:00',
-      liquidationRisk: 65
-    }
-  ]);
+  // positions 상태 초기화를 빈 배열로 변경
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [hlPositions, setHlPositions] = useState<Position[]>([]);
 
   const news: NewsItem[] = [
     { date: '12-31', headline: "CoinDesk's Most Influential in Crypto...", sentiment: 'POS' },
@@ -437,80 +411,124 @@ export default function Terminal() {
     };
   }, [currentSymbol, timeframe]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [crypto, history] = await Promise.all([
-          fetchCryptoData(),
-          fetchHistoricalData('bitcoin', 1)
-        ]);
-        setCryptoInfo(crypto);
-        setPriceData(history);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-        setLoading(false);
-      }
-    };
+  // 가격 데이터 가져오기
+  const [priceLoading, setPriceLoading] = useState(false);
 
-    fetchData();
-    const interval = setInterval(fetchData, 60000); // 1분마다 업데이트
-
-    return () => clearInterval(interval);
+  const fetchPriceData = React.useCallback(async () => {
+    try {
+      setPriceLoading(true);
+      const [crypto, history] = await Promise.all([
+        fetchCryptoData(),
+        fetchHistoricalData('bitcoin', 1)
+      ]);
+      setCryptoInfo(crypto);
+      setPriceData(history);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setPriceLoading(false);
+      setLoading(false);
+    }
   }, []);
 
   // 펀딩비 데이터 가져오기
-  useEffect(() => {
-    const fetchFundingRates = async () => {
-      try {
-        const response = await fetch('/api/funding');
-        if (!response.ok) {
-          throw new Error('Network response was not ok');
-        }
-        const data = await response.json();
-        setFundingRates(data.topTen); // 상위 10개만 기본적으로 표시
-      } catch (error) {
-        console.error('Error fetching funding rates:', error);
+  const [fundingLoading, setFundingLoading] = useState(false);
+
+  const fetchFundingRates = React.useCallback(async () => {
+    try {
+      setFundingLoading(true);
+      const response = await fetch('/api/funding');
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
       }
-    };
-
-    fetchFundingRates();
-    const interval = setInterval(fetchFundingRates, 30000); // 30초마다 업데이트
-
-    return () => clearInterval(interval);
+      const data = await response.json();
+      setFundingRates(data.topTen);
+    } catch (error) {
+      console.error('Error fetching funding rates:', error);
+    } finally {
+      setFundingLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    if (user?.linkedAccounts) {
-      console.log('전체 linkedAccounts:', user.linkedAccounts);
+  // 통합된 데이터 페칭 로직
+  const fetchAllData = React.useCallback(async () => {
+    const mounted = { current: true };
+    
+    try {
+      setPriceLoading(true);
+      setFundingLoading(true);
       
-      const wallets = (user.linkedAccounts as LinkedAccount[])
-        .filter(account => account.type === 'wallet')
-        .map(account => {
-          console.log('각 지갑 정보:', account.chainType);
+      if (mounted.current) {
+        const [positionsResponse, hlPositionsResponse, fundingResponse] = await Promise.all([
+          fetch('/api/positions'),
+          fetch('/api/hlpositions', {
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            },
+            cache: 'no-store'
+          }),
+          fetch('/api/funding')
+        ]);
+
+        if (mounted.current) {
+          const positionsData = await positionsResponse.json();
+          const hlPositionsData = await hlPositionsResponse.json();
+          const fundingData = await fundingResponse.json();
+
+          setPositions(positionsData);
+          setHlPositions(hlPositionsData);
+          setFundingRates(fundingData.topTen);
           
-          // chainType이 ethereum인 경우 EVM으로 변경
-          const chainType = account.chainType === 'ethereum' ? 'EVM' : account.chainType;
-          // chainType이 ethereum인 경우 EVM으로 변경
-          const clientType = account.walletClientType === 'privy' ? 'Privy' : account.walletClientType;
-          const connectorType = account.connectorType === 'embedded' ? 'embedded' : "external";
-          
-          return {
-            chainType: chainType || '',
-            address: account.address || '',
-            active: account.address === activeWalletAddress,
-            walletClientType: clientType || 'External',
-            connectorType: connectorType || 'external'
-          };
-        });
-      
-      console.log('변환된 wallets:', wallets);
-      setLinkedWallets(wallets);
-      
-      // Set first wallet as active by default if none is active
-      if (!activeWalletAddress && wallets.length > 0) {
-        setActiveWalletAddress(wallets[0].address);
+          // 가격 데이터는 일단 제외
+          setPriceData([]);
+          setCryptoInfo(null);
+        }
       }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      if (mounted.current) {
+        setPriceLoading(false);
+        setFundingLoading(false);
+        setLoading(false);
+      }
+    }
+
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // 초기 데이터 로드
+  React.useEffect(() => {
+    fetchAllData();
+  }, [fetchAllData]);
+
+  // 지갑 연결 상태 변경 감지
+  React.useEffect(() => {
+    if (!user?.linkedAccounts) return;
+
+    const wallets = (user.linkedAccounts as LinkedAccount[])
+      .filter(account => account.type === 'wallet')
+      .map(account => {
+        const chainType = account.chainType === 'ethereum' ? 'EVM' : account.chainType;
+        const clientType = account.walletClientType === 'privy' ? 'Privy' : account.walletClientType;
+        const connectorType = account.connectorType === 'embedded' ? 'embedded' : "external";
+        
+        return {
+          chainType: chainType || '',
+          address: account.address || '',
+          active: account.address === activeWalletAddress,
+          walletClientType: clientType || 'External',
+          connectorType: connectorType || 'external'
+        };
+      });
+    
+    setLinkedWallets(wallets);
+    
+    if (!activeWalletAddress && wallets.length > 0) {
+      setActiveWalletAddress(wallets[0].address);
     }
   }, [user?.linkedAccounts, activeWalletAddress]);
 
@@ -771,53 +789,131 @@ export default function Terminal() {
     );
   };
 
-  // 포지션 섹션 컴포넌트
-  const PositionSection = () => (
-    <div className="space-y-2">
-      {positions.map((pos, index) => (
-        <div key={index} className="text-xs font-mono border-b border-terminal-border pb-2 last:border-0">
-          <div className="flex justify-between items-center mb-1">
-            <div className="flex items-center gap-2">
-              <span className="text-[#ffb300]">{pos.symbol}</span>
-              <span className={pos.side === 'LONG' ? 'text-green-500' : 'text-red-500'}>
-                {pos.side} {pos.size}x
-              </span>
-            </div>
-            <span className={`px-1 rounded ${pos.liquidationRisk > 60 ? 'bg-red-500/20 text-red-500' : 'text-[#666]'}`}>
-              Risk {pos.liquidationRisk}%
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <div className="flex justify-between">
-              <span className="text-[#666]">{pos.exchange}</span>
-              <span className="text-white">${pos.entry.toFixed(1)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#666]">Liq</span>
-              <span className="text-red-500">${pos.liq}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#666]">PnL</span>
-              <span className={pos.pnl >= 0 ? 'text-green-500' : 'text-red-500'}>
-                ${Math.abs(pos.pnl).toFixed(1)} ({pos.roe}%)
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#666]">Funding</span>
-              <span className={pos.fundingRate >= 0 ? 'text-green-500' : 'text-red-500'}>
-                {(pos.fundingRate * 100).toFixed(4)}% ({formatTimeUntilFunding(pos.nextFundingTime)})
-              </span>
-            </div>
-          </div>
+  // BackpackPositionSection 컴포넌트 수정
+  const BackpackPositionSection = () => {
+    return (
+      <div className="space-y-2">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-[#666]">{positions.length} Active</span>
         </div>
-      ))}
-      {positions.length === 0 && (
-        <div className="text-[#666] text-xs text-center py-4">
-          No active positions
+        {positions.map((position, index) => {
+          const symbol = position.symbol.replace('_USDC_PERP', '');
+          const side = Number(position.netQuantity) > 0 ? 'LONG' : 'SHORT';
+          const size = Math.abs(Number(position.netQuantity));
+          const pnlUnrealized = Number(position.pnlUnrealized);
+          const pnlRealized = Number(position.pnlRealized);
+          const totalPnl = pnlUnrealized + pnlRealized;
+          const funding = Number(position.cumulativeFundingPayment);
+          const entryPrice = Number(position.entryPrice).toFixed(1);
+          const liqPrice = Number(position.estLiquidationPrice).toFixed(1);
+          
+          return (
+            <div key={index} className="font-mono bg-[#111] rounded-lg p-3 border border-terminal-border">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-[#ffb300]">{symbol}</span>
+                  <span className={side === 'LONG' ? 'text-green-500' : 'text-red-500'}>
+                    {size} {side} 
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between text-sm mb-2">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <span className="text-gray-500">Entry</span>
+                    <span className="text-white ml-2">${entryPrice}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Liq</span>
+                    <span className="text-white ml-2">${liqPrice}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="text-gray-500">PnL</span>
+                  <span className={totalPnl >= 0 ? 'text-green-500 ml-2' : 'text-red-500 ml-2'}>
+                    ${totalPnl.toFixed(2)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Funding</span>
+                  <span className={funding >= 0 ? 'text-green-500 ml-2' : 'text-red-500 ml-2'}>
+                    ${funding.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // HyperliquidPositionSection 컴포넌트 수정
+  const HyperliquidPositionSection = () => {
+    return (
+      <div className="space-y-2">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-[#666]">{hlPositions?.length || 0} Active</span>
         </div>
-      )}
-    </div>
-  );
+        {hlPositions.map((position, index) => {
+          const symbol = position.symbol;
+          const side = Number(position.netQuantity) > 0 ? 'LONG' : 'SHORT';
+          const size = Math.abs(Number(position.netQuantity));
+          const pnlUnrealized = Number(position.pnlUnrealized);
+          const pnlRealized = Number(position.pnlRealized);
+          const totalPnl = pnlUnrealized + pnlRealized;
+          const funding = Number(position.cumulativeFundingPayment);
+          const entryPrice = Number(position.entryPrice).toFixed(1);
+          const liqPrice = Number(position.estLiquidationPrice).toFixed(1);
+          
+          return (
+            <div key={index} className="font-mono bg-[#111] rounded-lg p-3 border border-terminal-border">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-[#ffb300]">{symbol}</span>
+                  <span className={side === 'LONG' ? 'text-green-500' : 'text-red-500'}>
+                    {size} {side}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between text-sm mb-2">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <span className="text-gray-500">Entry</span>
+                    <span className="text-white ml-2">${entryPrice}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Liq</span>
+                    <span className="text-white ml-2">${liqPrice}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="text-gray-500">PnL</span>
+                  <span className={totalPnl >= 0 ? 'text-green-500 ml-2' : 'text-red-500 ml-2'}>
+                    ${totalPnl.toFixed(2)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Funding</span>
+                  <span className={funding >= 0 ? 'text-green-500 ml-2' : 'text-red-500 ml-2'}>
+                    ${funding.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   // SigningModal 컴포넌트 추가
   const SigningModal = () => {
@@ -883,7 +979,7 @@ export default function Terminal() {
     <div className="w-full h-full min-h-screen bg-terminal-bg text-terminal-text p-4">
       <SigningModal />
       <div className="border border-terminal-border rounded p-2">
-        {/* 터미널 입력 섹션을 상단으로 이동 */}
+        {/* 터미널 입력 섹션 */}
         <div className="mb-2 border border-terminal-border rounded bg-terminal-bg">
           <div ref={terminalRef} className="w-full h-[3em]" />
         </div>
@@ -906,15 +1002,43 @@ export default function Terminal() {
           </div>
         )}
 
+        {/* 트레이딩 뷰 */}
         <div className="grid grid-cols-12 gap-2 h-[calc(100vh-8rem)]">
           {/* 지갑 정보 섹션 */}
-          <div className="col-span-4 border border-terminal-border rounded p-2 h-[calc(50vh)]">
+          {/* <div className="col-span-4 border border-terminal-border rounded p-2 h-[calc(50vh)]">
             <div className="bg-[#111] text-xs font-bold p-1 mb-2">CONNECTED WALLETS</div>
             <WalletSection />
+            
+          </div> */}
+
+          <div className="col-span-4 border border-terminal-border rounded p-2 h-[calc(50vh)]">
+            <div className="bg-[#111] text-xs font-bold p-1 mb-2 flex justify-between items-center">
+              <span>Backpack Positions</span>
+              <button
+                onClick={fetchAllData}
+                className="bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#ffb300] px-2 py-1 rounded text-xs"
+              >
+                ↻ Refresh All
+              </button>
+            </div>
+            <div className="h-[calc(50vh-4rem)] overflow-y-auto">
+              <BackpackPositionSection />
+            </div>
           </div>
 
-          {/* 차트 섹션 */}
-          <div className="col-span-5 border border-terminal-border rounded p-2 h-[calc(50vh)]">
+          {/* 포지션 섹션 */}
+          <div className="col-span-4 border border-terminal-border rounded p-2 h-[calc(50vh)]">
+            <div className="bg-[#111] text-xs font-bold p-1 mb-2 flex justify-between items-center">
+              <span>Hyperliquid Positions</span>
+              <span className="text-[#666]">{hlPositions?.length || 0} Active</span>
+            </div>
+            <div className="h-[calc(50vh-4rem)] overflow-y-auto">
+              <HyperliquidPositionSection />
+            </div>
+          </div>
+
+                  {/* 차트 섹션 */}
+                  <div className="col-span-4 border border-terminal-border rounded p-2 h-[calc(50vh)]">
             <div className="bg-[#111] text-xs font-bold p-1 mb-2 flex justify-between items-center">
               <span>{currentSymbol.replace('BINANCE:', '')} PRICE CHART</span>
               <span className="text-terminal-text">{timeframe}</span>
@@ -929,22 +1053,22 @@ export default function Terminal() {
             </div>
           </div>
 
-          {/* 포지션 섹션으로 변경 */}
-          <div className="col-span-3 border border-terminal-border rounded p-2 h-[calc(50vh)]">
-            <div className="bg-[#111] text-xs font-bold p-1 mb-2 flex justify-between items-center">
-              <span>POSITIONS</span>
-              <span className="text-[#666]">{positions.length} Active</span>
-            </div>
-            <div className="h-[calc(50vh-4rem)] overflow-y-auto">
-              <PositionSection />
-            </div>
-          </div>
-
           {/* 펀딩비 섹션 */}
           <div className="col-span-12 border border-terminal-border rounded p-2">
             <div className="bg-[#111] text-xs font-bold p-1 mb-2 flex justify-between items-center">
               <span>FUNDING COMPARISON (8h Rate)</span>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchFundingRates}
+                  disabled={fundingLoading}
+                  className={`px-2 py-1 text-xs rounded ${
+                    fundingLoading 
+                      ? 'bg-[#333] text-[#666]' 
+                      : 'bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#ffb300]'
+                  }`}
+                >
+                  {fundingLoading ? 'Updating...' : '↻ Refresh'}
+                </button>
                 <button
                   onClick={() => setShowAnnualRate(!showAnnualRate)}
                   className="bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#ffb300] px-2 py-1 rounded text-xs"

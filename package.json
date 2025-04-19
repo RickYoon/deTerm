@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@noble/ed25519": "2.2.3",
     "@privy-io/react-auth": "^2.9.1",
     "@privy-io/server-auth": "^1.15.3",
     "@tanstack/query-core": "^5.74.3",
